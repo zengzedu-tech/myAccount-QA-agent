@@ -2,54 +2,62 @@
 
 ## Project Overview
 
-**myAccount-QA-agent** — A QA automation agent project.
+**myAccount-QA-agent** — An AI-powered QA agent that uses Claude API and Playwright to autonomously test website login flows.
 
 ## Repository Structure
 
 ```
 myAccount-QA-agent/
-├── CLAUDE.md          # Claude Code configuration and project context
+├── main.py            # Entry point — runs the login test
+├── agent.py           # Claude AI agent with tool-use loop
+├── browser.py         # Playwright browser session and tool definitions
+├── config.py          # Environment config loader
+├── requirements.txt   # Python dependencies
+├── .env.example       # Template for environment variables
+├── .gitignore         # Git ignore rules
+├── CLAUDE.md          # This file
 └── README.md          # Project README
 ```
 
-> This project is in early setup. Update this section as the structure evolves.
-
 ## Getting Started
 
-_No dependencies or build steps configured yet. Update this section once a language/framework is chosen._
-
-## Build & Run
-
 ```bash
-# TODO: Add build commands once the project is set up
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Install Playwright browsers
+playwright install chromium
+
+# 3. Set up environment variables
+cp .env.example .env
+# Edit .env with your API key, target URL, and login credentials
+
+# 4. Run the agent
+python main.py
 ```
 
-## Testing
+## Environment Variables
 
-```bash
-# TODO: Add test commands once a test framework is configured
-```
+| Variable | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `TARGET_URL` | Login page URL to test |
+| `LOGIN_USERNAME` | Username/email for login |
+| `LOGIN_PASSWORD` | Password for login |
+| `HEADLESS` | Run browser headless (default: `true`) |
 
-## Linting & Formatting
+## How It Works
 
-```bash
-# TODO: Add lint/format commands once configured
-```
-
-## Development Workflow
-
-- Branch naming: feature branches should be descriptive
-- Commit messages: use clear, concise descriptions of changes
-- Push changes to the appropriate feature branch before merging
+1. `main.py` loads config and invokes the agent
+2. `agent.py` sends a prompt to Claude with browser tools attached
+3. Claude autonomously decides which tools to call (navigate, inspect HTML, fill fields, click, screenshot)
+4. `browser.py` executes each tool via Playwright and returns results to Claude
+5. Claude loops until it determines login passed or failed, then returns a summary
 
 ## Key Conventions
 
-- Keep code clean and well-documented
-- Write tests for new functionality
-- Follow the linting and formatting rules once established
-
-## Notes for Claude
-
-- This is a fresh repository — infrastructure and tooling are not yet configured
-- When adding new tooling, update this file to reflect build, test, and lint commands
-- Always check for existing patterns before introducing new ones
+- Python 3.10+
+- Claude API with tool use for agent reasoning
+- Playwright for browser automation
+- Config via `.env` file (never commit secrets)
+- Screenshots saved to `screenshots/` directory
