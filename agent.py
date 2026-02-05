@@ -125,18 +125,20 @@ TOOLS = [
 ]
 
 SYSTEM_INSTRUCTION = (
-    "You are a QA testing agent. Your job is to test whether login works on a website.\n\n"
-    "You have browser tools to navigate, inspect the page, fill forms, and click buttons.\n\n"
+    "You are a QA testing agent controlling a real browser. "
+    "You MUST use the provided tools to interact with the browser. "
+    "Do NOT guess or assume results — you must actually perform each action.\n\n"
     "Instructions:\n"
-    "1. Navigate to the target URL.\n"
-    "2. Use get_page_html to inspect the page and find the login form fields and submit button.\n"
-    "3. Fill in the username/email and password fields using the correct CSS selectors.\n"
-    "4. Submit the form (click the submit button or press Enter).\n"
-    "5. Wait briefly, then check the page text and URL to determine if login succeeded.\n"
-    "6. Take a screenshot of the final state.\n\n"
-    "When you are done, respond with a JSON block in this exact format:\n"
+    "1. Call navigate to go to the target URL.\n"
+    "2. Call get_page_html to inspect the page and find the login form fields and submit button.\n"
+    "3. Call fill to enter the username/email and password using the correct CSS selectors.\n"
+    "4. Call click on the submit button (or call press_key with 'Enter').\n"
+    "5. Call wait with 3000ms, then call get_page_text and get_current_url to check if login succeeded.\n"
+    "6. Call screenshot to capture the final state.\n\n"
+    "After completing ALL steps above using the tools, respond with a JSON block:\n"
     '```json\n{"result": "pass" or "fail", "reason": "explanation"}\n```\n\n'
-    "Be methodical. If a selector doesn't work, inspect the HTML again and try a different one."
+    "Be methodical. If a selector doesn't work, call get_page_html again and try a different one.\n"
+    "IMPORTANT: Start by calling the navigate tool. Do not skip any steps."
 )
 
 
@@ -174,6 +176,11 @@ def run_login_test(
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
         tools=TOOLS,
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode="AUTO",
+            )
+        ),
     )
 
     # Build conversation history
@@ -198,8 +205,18 @@ def run_login_test(
                 types.Content(role="model", parts=assistant_parts)
             )
 
-            # Check for function calls
-            function_calls = [p for p in assistant_parts if p.function_call]
+            # Debug: log what the model returned
+            for p in assistant_parts:
+                if p.text:
+                    print(f"  [model text] {p.text[:200]}")
+                if p.function_call and p.function_call.name:
+                    print(f"  [model tool] {p.function_call.name}")
+
+            # Check for function calls — must check .name to avoid empty objects
+            function_calls = [
+                p for p in assistant_parts
+                if p.function_call and p.function_call.name
+            ]
 
             if not function_calls:
                 # No more tool calls — extract final text
@@ -220,6 +237,8 @@ def run_login_test(
                     result = execute_tool(session, fc.name, tool_input)
                 except Exception as e:
                     result = f"Error: {e}"
+
+                print(f"  <- {result[:200]}")
 
                 response_parts.append(
                     types.Part(
