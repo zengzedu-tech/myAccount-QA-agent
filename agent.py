@@ -7,121 +7,135 @@ from browser import BrowserSession, execute_tool
 
 
 # Define tools as Gemini function declarations
-TOOLS = [
-    types.Tool(
-        function_declarations=[
-            types.FunctionDeclaration(
-                name="navigate",
-                description="Navigate the browser to a URL.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "url": types.Schema(
-                            type=types.Type.STRING,
-                            description="The URL to navigate to.",
-                        )
-                    },
-                    required=["url"],
+TOOL_DECLARATIONS = [
+    types.FunctionDeclaration(
+        name="navigate",
+        description="Navigate the browser to a URL.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "url": types.Schema(
+                    type=types.Type.STRING,
+                    description="The URL to navigate to.",
+                )
+            },
+            required=["url"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="click",
+        description="Click an element on the page by CSS selector.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "selector": types.Schema(
+                    type=types.Type.STRING,
+                    description="CSS selector of the element to click.",
+                )
+            },
+            required=["selector"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="fill",
+        description="Type text into a form field identified by CSS selector.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "selector": types.Schema(
+                    type=types.Type.STRING,
+                    description="CSS selector of the input field.",
                 ),
-            ),
-            types.FunctionDeclaration(
-                name="click",
-                description="Click an element on the page by CSS selector.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "selector": types.Schema(
-                            type=types.Type.STRING,
-                            description="CSS selector of the element to click.",
-                        )
-                    },
-                    required=["selector"],
+                "value": types.Schema(
+                    type=types.Type.STRING,
+                    description="The text to type into the field.",
                 ),
-            ),
-            types.FunctionDeclaration(
-                name="fill",
-                description="Type text into a form field identified by CSS selector.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "selector": types.Schema(
-                            type=types.Type.STRING,
-                            description="CSS selector of the input field.",
-                        ),
-                        "value": types.Schema(
-                            type=types.Type.STRING,
-                            description="The text to type into the field.",
-                        ),
-                    },
-                    required=["selector", "value"],
+            },
+            required=["selector", "value"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_page_text",
+        description="Get the visible text content of the current page.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={},
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_page_html",
+        description="Get the HTML source of the current page to inspect its structure and find selectors.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={},
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="screenshot",
+        description="Take a screenshot of the current page.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "filename": types.Schema(
+                    type=types.Type.STRING,
+                    description="Filename for the screenshot (default: screenshot.png).",
+                )
+            },
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_current_url",
+        description="Get the current page URL.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={},
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="press_key",
+        description="Press a keyboard key (e.g. 'Enter', 'Tab').",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "key": types.Schema(
+                    type=types.Type.STRING,
+                    description="The key to press.",
+                )
+            },
+            required=["key"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="wait",
+        description="Wait for a specified duration in milliseconds.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "ms": types.Schema(
+                    type=types.Type.NUMBER,
+                    description="Milliseconds to wait (default: 2000).",
+                )
+            },
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="done",
+        description="Call this when you have completed the login test. Report whether login passed or failed.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "result": types.Schema(
+                    type=types.Type.STRING,
+                    description="'pass' if login succeeded, 'fail' if it did not.",
                 ),
-            ),
-            types.FunctionDeclaration(
-                name="get_page_text",
-                description="Get the visible text content of the current page.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={},
+                "reason": types.Schema(
+                    type=types.Type.STRING,
+                    description="Explanation of why login passed or failed.",
                 ),
-            ),
-            types.FunctionDeclaration(
-                name="get_page_html",
-                description="Get the HTML source of the current page to inspect its structure and find selectors.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={},
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="screenshot",
-                description="Take a screenshot of the current page.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "filename": types.Schema(
-                            type=types.Type.STRING,
-                            description="Filename for the screenshot (default: screenshot.png).",
-                        )
-                    },
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="get_current_url",
-                description="Get the current page URL.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={},
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="press_key",
-                description="Press a keyboard key (e.g. 'Enter', 'Tab').",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "key": types.Schema(
-                            type=types.Type.STRING,
-                            description="The key to press.",
-                        )
-                    },
-                    required=["key"],
-                ),
-            ),
-            types.FunctionDeclaration(
-                name="wait",
-                description="Wait for a specified duration in milliseconds.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "ms": types.Schema(
-                            type=types.Type.NUMBER,
-                            description="Milliseconds to wait (default: 2000).",
-                        )
-                    },
-                ),
-            ),
-        ]
-    )
+            },
+            required=["result", "reason"],
+        ),
+    ),
 ]
 
 SYSTEM_INSTRUCTION = (
@@ -134,9 +148,8 @@ SYSTEM_INSTRUCTION = (
     "3. Call fill to enter the username/email and password using the correct CSS selectors.\n"
     "4. Call click on the submit button (or call press_key with 'Enter').\n"
     "5. Call wait with 3000ms, then call get_page_text and get_current_url to check if login succeeded.\n"
-    "6. Call screenshot to capture the final state.\n\n"
-    "After completing ALL steps above using the tools, respond with a JSON block:\n"
-    '```json\n{"result": "pass" or "fail", "reason": "explanation"}\n```\n\n'
+    "6. Call screenshot to capture the final state.\n"
+    "7. Call done with the result.\n\n"
     "Be methodical. If a selector doesn't work, call get_page_html again and try a different one.\n"
     "IMPORTANT: Start by calling the navigate tool. Do not skip any steps."
 )
@@ -170,12 +183,26 @@ def run_login_test(
         f"- URL: {target_url}\n"
         f"- Username/email: {username}\n"
         f"- Password: {password}\n\n"
-        f"Go ahead and test it now."
+        f"Start by calling the navigate tool with the URL above."
     )
 
-    config = types.GenerateContentConfig(
+    tools = [types.Tool(function_declarations=TOOL_DECLARATIONS)]
+
+    # Force tool use — model MUST call a tool on every turn
+    forced_config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
-        tools=TOOLS,
+        tools=tools,
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode="ANY",
+            )
+        ),
+    )
+
+    # Allow text responses (for final summary after done)
+    auto_config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_INSTRUCTION,
+        tools=tools,
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(
                 mode="AUTO",
@@ -188,11 +215,15 @@ def run_login_test(
         types.Content(role="user", parts=[types.Part(text=user_message)])
     ]
 
-    max_turns = 15
+    max_turns = 20
     final_summary = "Agent did not produce a result."
+    done_called = False
 
     try:
         for turn in range(max_turns):
+            # Use forced tool calling until the agent calls "done"
+            config = auto_config if done_called else forced_config
+
             response = client.models.generate_content(
                 model=model,
                 contents=contents,
@@ -212,19 +243,18 @@ def run_login_test(
                 if p.function_call and p.function_call.name:
                     print(f"  [model tool] {p.function_call.name}")
 
-            # Check for function calls — must check .name to avoid empty objects
+            # Check for function calls
             function_calls = [
                 p for p in assistant_parts
                 if p.function_call and p.function_call.name
             ]
 
             if not function_calls:
-                # No more tool calls — extract final text
                 text_parts = [p.text for p in assistant_parts if p.text]
                 final_summary = "\n".join(text_parts)
                 break
 
-            # Execute each function call and collect responses
+            # Execute each function call
             response_parts = []
             for part in function_calls:
                 fc = part.function_call
@@ -233,10 +263,18 @@ def run_login_test(
                 print(f"  -> {step_desc}")
                 steps.append(step_desc)
 
-                try:
-                    result = execute_tool(session, fc.name, tool_input)
-                except Exception as e:
-                    result = f"Error: {e}"
+                # Handle the "done" tool — agent is finished
+                if fc.name == "done":
+                    done_called = True
+                    result_val = tool_input.get("result", "fail")
+                    reason = tool_input.get("reason", "No reason given.")
+                    final_summary = json.dumps({"result": result_val, "reason": reason})
+                    result = "Test complete."
+                else:
+                    try:
+                        result = execute_tool(session, fc.name, tool_input)
+                    except Exception as e:
+                        result = f"Error: {e}"
 
                 print(f"  <- {result[:200]}")
 
@@ -248,6 +286,9 @@ def run_login_test(
                         )
                     )
                 )
+
+            if done_called:
+                break
 
             contents.append(types.Content(role="user", parts=response_parts))
 
