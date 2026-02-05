@@ -2,16 +2,16 @@
 
 ## Project Overview
 
-**myAccount-QA-agent** — An AI-powered QA agent that uses Claude API and Playwright to autonomously test website login flows.
+**myAccount-QA-agent** — An AI-powered QA agent that uses Gemini API and Playwright to autonomously test website login flows.
 
 ## Repository Structure
 
 ```
 myAccount-QA-agent/
 ├── .github/workflows/
-│   └── qa-login-test.yml  # GitHub Actions — scheduled & manual runs
+│   └── qa-login-test.yml  # GitHub Actions — manual trigger
 ├── main.py                # Entry point — runs the login test
-├── agent.py               # Claude AI agent with tool-use loop
+├── agent.py               # Gemini AI agent with function-calling loop
 ├── browser.py             # Playwright browser session and tool definitions
 ├── config.py              # Environment config loader
 ├── requirements.txt       # Python dependencies
@@ -42,7 +42,7 @@ python main.py
 
 | Variable | Description |
 |---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `GEMINI_API_KEY` | Your Google Gemini API key |
 | `TARGET_URL` | Login page URL to test |
 | `LOGIN_USERNAME` | Username/email for login |
 | `LOGIN_PASSWORD` | Password for login |
@@ -51,10 +51,10 @@ python main.py
 ## How It Works
 
 1. `main.py` loads config and invokes the agent
-2. `agent.py` sends a prompt to Claude with browser tools attached
-3. Claude autonomously decides which tools to call (navigate, inspect HTML, fill fields, click, screenshot)
-4. `browser.py` executes each tool via Playwright and returns results to Claude
-5. Claude loops until it determines login passed or failed, then returns a summary
+2. `agent.py` sends a prompt to Gemini with browser tools attached via function calling
+3. Gemini autonomously decides which tools to call (navigate, inspect HTML, fill fields, click, screenshot)
+4. `browser.py` executes each tool via Playwright and returns results to Gemini
+5. Gemini loops until it determines login passed or failed, then returns a summary
 
 ## CI/CD — GitHub Actions
 
@@ -68,7 +68,7 @@ Set these in **Settings > Secrets and variables > Actions**:
 
 | Secret | Description |
 |---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `GEMINI_API_KEY` | Your Google Gemini API key |
 | `TARGET_URL` | Login page URL to test |
 | `LOGIN_USERNAME` | Username/email for login |
 | `LOGIN_PASSWORD` | Password for login |
@@ -78,7 +78,7 @@ Screenshots are uploaded as workflow artifacts (retained 30 days).
 ## Key Conventions
 
 - Python 3.10+
-- Claude API with tool use for agent reasoning
+- Gemini API (free tier) with function calling for agent reasoning
 - Playwright for browser automation
 - Config via `.env` file locally (never commit secrets)
 - GitHub Secrets for CI/CD

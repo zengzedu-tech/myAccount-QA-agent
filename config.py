@@ -9,7 +9,7 @@ load_dotenv()
 def get_config() -> dict:
     """Load and validate configuration from environment."""
     config = {
-        "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+        "api_key": os.getenv("GEMINI_API_KEY", ""),
         "target_url": os.getenv("TARGET_URL", ""),
         "username": os.getenv("LOGIN_USERNAME", ""),
         "password": os.getenv("LOGIN_PASSWORD", ""),
@@ -18,7 +18,7 @@ def get_config() -> dict:
 
     missing = []
     if not config["api_key"]:
-        missing.append("ANTHROPIC_API_KEY")
+        missing.append("GEMINI_API_KEY")
     if not config["target_url"]:
         missing.append("TARGET_URL")
     if not config["username"]:
