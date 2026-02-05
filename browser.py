@@ -4,7 +4,6 @@ import base64
 import os
 import time
 from playwright.sync_api import sync_playwright, Browser, Page
-from playwright_stealth import stealth_sync
 
 
 class BrowserSession:
@@ -34,7 +33,30 @@ class BrowserSession:
             locale="en-US",
         )
         # Apply stealth patches to avoid bot detection
-        stealth_sync(self._page)
+        self._page.add_init_script("""
+            // Remove webdriver flag
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+            // Fake plugins array
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+            });
+
+            // Fake languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en'],
+            });
+
+            // Fake Chrome runtime
+            window.chrome = { runtime: {} };
+
+            // Fake permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) =>
+                parameters.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : originalQuery(parameters);
+        """)
 
     def stop(self):
         if self._browser:
