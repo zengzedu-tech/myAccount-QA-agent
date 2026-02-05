@@ -60,8 +60,7 @@ python main.py
 
 The workflow (`.github/workflows/qa-login-test.yml`) runs the login test:
 
-- **Scheduled**: Daily at 8:00 AM UTC
-- **Manual**: Trigger from the Actions tab with optional URL override
+- **Manual only**: Trigger from the Actions tab with optional URL override
 
 ### Required GitHub Secrets
 
