@@ -2,7 +2,9 @@
 
 import base64
 import os
+import time
 from playwright.sync_api import sync_playwright, Browser, Page
+from playwright_stealth import stealth_sync
 
 
 class BrowserSession:
@@ -20,6 +22,7 @@ class BrowserSession:
             headless=self.headless,
             args=[
                 "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
             ],
         )
         self._page = self._browser.new_page(
@@ -28,11 +31,10 @@ class BrowserSession:
                 "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1920, "height": 1080},
+            locale="en-US",
         )
-        # Remove the webdriver flag that Cloudflare checks
-        self._page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        """)
+        # Apply stealth patches to avoid bot detection
+        stealth_sync(self._page)
 
     def stop(self):
         if self._browser:
@@ -50,8 +52,16 @@ class BrowserSession:
         return self._page
 
     def navigate(self, url: str) -> str:
-        """Navigate to a URL and return the page title."""
-        self.page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        """Navigate to a URL, wait for Cloudflare if needed, and return the page title."""
+        self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # Wait for Cloudflare challenge to resolve (up to 15s)
+        for _ in range(15):
+            title = self.page.title()
+            if "cloudflare" not in title.lower() and "attention required" not in title.lower():
+                break
+            time.sleep(1)
+
         return f"Navigated to {self.page.url} — title: {self.page.title()}"
 
     def click(self, selector: str) -> str:
