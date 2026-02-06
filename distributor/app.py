@@ -1,6 +1,8 @@
-"""Distributor Service — parses test plans and dispatches tasks to workers."""
+"""Distributor Service — parses test plans with AI and dispatches tasks to workers."""
 
 import asyncio
+import json
+import logging
 import os
 import tempfile
 import uuid
@@ -13,8 +15,14 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 
 app = FastAPI(title="QA Agent Distributor Service")
+logger = logging.getLogger("distributor")
 
 WORKER_URL = os.getenv("WORKER_URL", "http://localhost:8090")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
 
 # In-memory storage for test runs and tasks
 test_runs: dict[str, dict] = {}
@@ -30,14 +38,17 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# POST /api/test-runs — Upload Excel test plan, parse rows, dispatch tasks
+# POST /api/test-runs — Upload test plan, AI-parse it, dispatch tasks
 # ---------------------------------------------------------------------------
 
 @app.post("/api/test-runs")
 async def create_test_run(file: UploadFile = File(...)):
-    """Accept an Excel file upload, parse rows, create tasks, and dispatch to workers."""
+    """Accept an Excel file upload, use AI to analyze it, and dispatch tasks to workers."""
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="File must be an Excel (.xlsx) file")
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured on distributor")
 
     # Save uploaded file to a temp location for openpyxl to read
     content = await file.read()
@@ -45,14 +56,27 @@ async def create_test_run(file: UploadFile = File(...)):
     tmp_path.write_bytes(content)
 
     try:
-        tasks = _parse_excel(tmp_path)
+        raw_text = _excel_to_text(tmp_path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         tmp_path.unlink(missing_ok=True)
 
+    if not raw_text.strip():
+        raise HTTPException(status_code=400, detail="Excel file appears to be empty")
+
+    # Use Gemini AI to analyze the spreadsheet and extract tasks
+    try:
+        tasks = await _ai_parse_test_plan(raw_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     if not tasks:
-        raise HTTPException(status_code=400, detail="No valid rows found in the Excel file")
+        raise HTTPException(
+            status_code=400,
+            detail="AI could not extract any valid test tasks from the file. "
+                   "Each task needs at least a target_url, username, and password.",
+        )
 
     run_id = str(uuid.uuid4())
     run = {
@@ -160,57 +184,141 @@ async def receive_task_result(run_id: str, task_id: str, result: dict):
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# AI-powered Excel parsing via Gemini
 # ---------------------------------------------------------------------------
 
-def _parse_excel(path: Path) -> list[dict]:
-    """Parse an Excel test plan file. Expected columns: target_url, username, password, instructions."""
+PARSE_PROMPT = """\
+You are a QA test plan parser. You will receive the raw text content of an Excel spreadsheet.
+
+Your job is to analyze the spreadsheet — regardless of how columns are named, ordered, or formatted — and extract a list of QA test tasks.
+
+For each row that represents a test case, extract:
+- **target_url**: The website URL / login page to test
+- **username**: The login username or email
+- **password**: The login password
+- **instructions**: Any additional testing instructions (optional, default to empty string)
+
+Rules:
+- Column headers may use different names (e.g. "URL", "Site", "Login Page", "Email", "User", "Pass", "pwd", etc.) — use your judgement to map them
+- Skip header rows, empty rows, and rows that are clearly not test cases
+- If a column has URLs, that's likely the target_url
+- If columns contain what look like email addresses or usernames, that's the username
+- If a column has short strings that look like passwords, that's the password
+- Any remaining notes/comments columns are instructions
+- If you cannot identify the required fields (target_url, username, password), return an empty array
+
+Respond with ONLY a valid JSON array. No markdown, no explanation. Example:
+[
+  {"target_url": "https://example.com/login", "username": "user@test.com", "password": "Pass123", "instructions": ""},
+  {"target_url": "https://other.com/login", "username": "admin@test.com", "password": "Secret1", "instructions": "Check rewards page"}
+]
+
+Here is the spreadsheet content:
+
+"""
+
+
+def _excel_to_text(path: Path) -> str:
+    """Read all cells from an Excel file and convert to a text table."""
     wb = openpyxl.load_workbook(path, read_only=True)
     ws = wb.active
     if ws is None:
         raise ValueError("Excel file has no active sheet")
 
     rows = list(ws.iter_rows(values_only=True))
-    if len(rows) < 2:
-        raise ValueError("Excel file must have a header row and at least one data row")
+    if not rows:
+        raise ValueError("Excel file is empty")
 
-    # Normalise headers to lowercase, stripped
-    headers = [str(h).strip().lower() if h else "" for h in rows[0]]
-
-    required = {"target_url", "username", "password"}
-    if not required.issubset(set(headers)):
-        missing = required - set(headers)
-        raise ValueError(f"Missing required columns: {', '.join(sorted(missing))}")
-
-    col_map = {name: idx for idx, name in enumerate(headers)}
-    tasks = []
-
-    for row_num, row in enumerate(rows[1:], start=2):
-        target_url = _cell_str(row, col_map.get("target_url"))
-        username = _cell_str(row, col_map.get("username"))
-        password = _cell_str(row, col_map.get("password"))
-        instructions = _cell_str(row, col_map.get("instructions"))
-
-        if not target_url or not username or not password:
-            continue  # skip incomplete rows
-
-        tasks.append({
-            "target_url": target_url,
-            "username": username,
-            "password": password,
-            "instructions": instructions,
-        })
+    # Build a pipe-delimited text representation of the spreadsheet
+    lines = []
+    for i, row in enumerate(rows):
+        cells = [str(c).strip() if c is not None else "" for c in row]
+        # Skip completely empty rows
+        if not any(cells):
+            continue
+        prefix = f"Row {i + 1}"
+        lines.append(f"{prefix}: | {' | '.join(cells)} |")
 
     wb.close()
-    return tasks
+    return "\n".join(lines)
 
 
-def _cell_str(row: tuple, idx: int | None) -> str:
-    """Safely extract a string from a row tuple."""
-    if idx is None or idx >= len(row) or row[idx] is None:
-        return ""
-    return str(row[idx]).strip()
+async def _ai_parse_test_plan(raw_text: str) -> list[dict]:
+    """Send the spreadsheet text to Gemini and get structured task data back."""
+    url = GEMINI_API_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
 
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": PARSE_PROMPT + raw_text}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.0,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, json=payload)
+
+    if resp.status_code != 200:
+        logger.error("Gemini API error %d: %s", resp.status_code, resp.text)
+        raise ValueError(f"AI analysis failed (HTTP {resp.status_code}). Check GEMINI_API_KEY.")
+
+    body = resp.json()
+
+    # Extract text from Gemini response
+    try:
+        text = body["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        logger.error("Unexpected Gemini response: %s", json.dumps(body)[:500])
+        raise ValueError("AI returned an unexpected response format")
+
+    # Parse the JSON array
+    text = text.strip()
+    # Strip markdown fences if the model wraps output
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+    try:
+        tasks = json.loads(text)
+    except json.JSONDecodeError:
+        logger.error("AI returned invalid JSON: %s", text[:500])
+        raise ValueError("AI returned invalid JSON. The file may not be a valid test plan.")
+
+    if not isinstance(tasks, list):
+        raise ValueError("AI returned non-list response. The file may not be a valid test plan.")
+
+    # Validate each task has required fields
+    valid_tasks = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        target_url = str(t.get("target_url", "")).strip()
+        username = str(t.get("username", "")).strip()
+        password = str(t.get("password", "")).strip()
+        instructions = str(t.get("instructions", "")).strip()
+
+        if target_url and username and password:
+            valid_tasks.append({
+                "target_url": target_url,
+                "username": username,
+                "password": password,
+                "instructions": instructions,
+            })
+
+    return valid_tasks
+
+
+# ---------------------------------------------------------------------------
+# Task dispatch and result handling
+# ---------------------------------------------------------------------------
 
 async def _dispatch_all_tasks(run_id: str):
     """Dispatch all tasks in a run to the worker service concurrently."""
