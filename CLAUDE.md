@@ -9,12 +9,23 @@ The platform consists of 3 microservices deployed on GKE:
 - **Distributor** — Parses test plans (Excel) and dispatches tasks to workers
 - **Worker** — Runs the AI-powered browser agent against target sites
 
+## Implementation Status
+
+| Service | Status | Notes |
+|---|---|---|
+| **UI** | ✅ Done | Dashboard with upload, execution tracking, and results display |
+| **Distributor** | ⬜ Not started | `distributor/app.py` is scaffolded (stub only) |
+| **Worker** | ⬜ Not started | `worker/app.py` is scaffolded; `agent.py` and `browser.py` exist but need integration |
+
 ## Repository Structure
 
 ```
 myAccount-QA-agent/
-├── ui/                        # Frontend service (port 3000)
-│   ├── app.py                 # FastAPI app — serves UI pages
+├── ui/                        # Frontend service (port 3000) ✅ IMPLEMENTED
+│   ├── app.py                 # FastAPI app — proxy endpoints + template serving
+│   ├── templates/
+│   │   └── index.html         # Jinja2 dashboard (Tailwind + Material Icons)
+│   ├── stitchUI               # Original Stitch design reference (static HTML)
 │   ├── Dockerfile
 │   └── requirements.txt
 │
@@ -51,10 +62,22 @@ myAccount-QA-agent/
 
 ## Service Architecture
 
-### UI Service (port 3000)
+### UI Service (port 3000) — ✅ IMPLEMENTED
 - Single-page web app for uploading Excel test plans and viewing results
 - Calls Distributor API at `DISTRIBUTOR_URL` env var
 - Tech: FastAPI + Jinja2 templates + httpx
+- **`ui/app.py`** endpoints:
+  - `GET /` — Dashboard page (Jinja2 template)
+  - `POST /api/upload` — Proxies file + instructions to `DISTRIBUTOR_URL/api/test-runs`
+  - `GET /api/runs/{run_id}` — Proxies run status from Distributor
+  - `GET /api/runs/{run_id}/tasks/{task_id}/screenshots/{filename}` — Proxies screenshots
+  - `GET /api/sample-template` — Downloads sample CSV test plan
+  - `GET /health` — Health check
+- **`ui/templates/index.html`** — Dashboard with 3 sections:
+  1. Upload: drag-and-drop file picker, instructions textarea, run button
+  2. Execution: progress bar, task status table, terminal-style log viewer
+  3. Results: stats grid (total/passed/failed/duration), expandable cards per task with summary, account info, offers, screenshots, step logs
+- Design: Tailwind CSS, Inter font, Material Symbols, dark mode, mobile bottom nav
 
 ### Distributor Service (port 8080)
 - `POST /api/test-runs` — Upload Excel test plan, parse rows, create tasks, dispatch to workers
@@ -99,17 +122,19 @@ myAccount-QA-agent/
 
 ## Implementation Tasks Per Service
 
-### UI Agent — `ui/` folder only
+### UI Agent — `ui/` folder only — ✅ DONE
 
-Implement a single-page web app with 3 sections:
+Fully implemented. Key files:
+- **`ui/app.py`** — FastAPI backend with proxy endpoints to Distributor API (upload, poll, screenshots, sample template)
+- **`ui/templates/index.html`** — Full dashboard matching `ui/stitchUI` design reference
 
-1. **Upload Section** — Form to upload an Excel (.xlsx) test plan file. On submit, POST the file to Distributor at `DISTRIBUTOR_URL/api/test-runs` (multipart form upload). Show a spinner while uploading.
+What was built:
+1. **Upload Section** — Drag-and-drop file picker (.xlsx/.csv), instructions textarea, "Run Tests" button (disabled until file selected), sample template download link
+2. **Progress Section** — Polls `GET /api/runs/{run_id}` every 3s. Shows progress bar, task status table (URL + badge), terminal log viewer with color-coded entries. Stops polling when status is `completed` or `failed`
+3. **Results Section** — Stats grid (total/passed/failed/duration), expandable cards per task showing: agent summary, account info, offers, screenshot thumbnails (clickable), agent step logs in terminal view
+4. **Extras** — Dark mode toggle, mobile bottom nav, "New Run" reset button
 
-2. **Progress Section** — After upload, poll `GET DISTRIBUTOR_URL/api/test-runs/{run_id}` every 3 seconds. Show a progress bar or task-level status table (task_id, target_url, status). Stop polling when all tasks are `completed` or `failed`.
-
-3. **Results Section** — When a run finishes, display a results table with columns: Target URL, Status (pass/fail), Summary, Account Info, Offers, Duration, Screenshots (clickable links). Screenshot URLs: `DISTRIBUTOR_URL/api/test-runs/{run_id}/tasks/{task_id}/screenshots/{filename}`.
-
-Tech: FastAPI + Jinja2 templates + httpx. The UI calls the Distributor API — it does NOT call the Worker directly.
+The UI proxies all API calls through its own backend (never calls Worker directly). The frontend JS expects the Distributor API response shape documented in the Shared API Contract section above.
 
 ### Distributor Agent — `distributor/` folder only
 
