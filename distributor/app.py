@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 import openpyxl
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, Form, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 
 app = FastAPI(title="QA Agent Distributor Service")
@@ -42,8 +42,11 @@ def health():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/test-runs")
-async def create_test_run(file: UploadFile = File(...)):
-    """Accept an Excel file upload, use AI to analyze it, and dispatch tasks to workers."""
+async def create_test_run(
+    file: UploadFile = File(...),
+    description: str = Form(""),
+):
+    """Accept an Excel file upload with optional description, use AI to analyze it, and dispatch tasks."""
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="File must be an Excel (.xlsx) file")
 
@@ -66,8 +69,9 @@ async def create_test_run(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Excel file appears to be empty")
 
     # Use Gemini AI to analyze the spreadsheet and extract tasks
+    user_description = description.strip()
     try:
-        tasks = await _ai_parse_test_plan(raw_text)
+        tasks = await _ai_parse_test_plan(raw_text, user_description)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -188,7 +192,7 @@ async def receive_task_result(run_id: str, task_id: str, result: dict):
 # ---------------------------------------------------------------------------
 
 PARSE_PROMPT = """\
-You are a QA test plan parser. You will receive the raw text content of an Excel spreadsheet.
+You are a QA test plan parser. You will receive the raw text content of an Excel spreadsheet, and optionally a description from the user explaining what they want to test.
 
 Your job is to analyze the spreadsheet — regardless of how columns are named, ordered, or formatted — and extract a list of QA test tasks.
 
@@ -196,7 +200,7 @@ For each row that represents a test case, extract:
 - **target_url**: The website URL / login page to test
 - **username**: The login username or email
 - **password**: The login password
-- **instructions**: Any additional testing instructions (optional, default to empty string)
+- **instructions**: Specific testing instructions for the worker agent. This is CRITICAL — combine any per-row notes from the spreadsheet with the user's overall description to produce clear, actionable instructions for each task. If the user provided a description, incorporate it into every task's instructions so the worker knows exactly what to do beyond the basic login test.
 
 Rules:
 - Column headers may use different names (e.g. "URL", "Site", "Login Page", "Email", "User", "Pass", "pwd", etc.) — use your judgement to map them
@@ -204,17 +208,15 @@ Rules:
 - If a column has URLs, that's likely the target_url
 - If columns contain what look like email addresses or usernames, that's the username
 - If a column has short strings that look like passwords, that's the password
-- Any remaining notes/comments columns are instructions
+- Any remaining notes/comments columns contribute to the per-row instructions
+- If the user provided a description, prepend it to each task's instructions so the worker agent understands the overall testing goal
 - If you cannot identify the required fields (target_url, username, password), return an empty array
 
 Respond with ONLY a valid JSON array. No markdown, no explanation. Example:
 [
-  {"target_url": "https://example.com/login", "username": "user@test.com", "password": "Pass123", "instructions": ""},
-  {"target_url": "https://other.com/login", "username": "admin@test.com", "password": "Secret1", "instructions": "Check rewards page"}
+  {"target_url": "https://example.com/login", "username": "user@test.com", "password": "Pass123", "instructions": "After login, navigate to the rewards page and verify the points balance is displayed."},
+  {"target_url": "https://other.com/login", "username": "admin@test.com", "password": "Secret1", "instructions": "After login, navigate to the rewards page and verify the points balance is displayed. Also check the offers section."}
 ]
-
-Here is the spreadsheet content:
-
 """
 
 
@@ -243,15 +245,22 @@ def _excel_to_text(path: Path) -> str:
     return "\n".join(lines)
 
 
-async def _ai_parse_test_plan(raw_text: str) -> list[dict]:
+async def _ai_parse_test_plan(raw_text: str, user_description: str = "") -> list[dict]:
     """Send the spreadsheet text to Gemini and get structured task data back."""
     url = GEMINI_API_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
+
+    # Build the full prompt with optional user description
+    prompt_parts = [PARSE_PROMPT]
+    if user_description:
+        prompt_parts.append(f"USER DESCRIPTION:\n{user_description}\n")
+    prompt_parts.append(f"SPREADSHEET CONTENT:\n{raw_text}")
+    full_prompt = "\n".join(prompt_parts)
 
     payload = {
         "contents": [
             {
                 "parts": [
-                    {"text": PARSE_PROMPT + raw_text}
+                    {"text": full_prompt}
                 ]
             }
         ],
