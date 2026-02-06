@@ -9,6 +9,14 @@ The platform consists of 3 microservices deployed on GKE:
 - **Distributor** — AI-powered orchestrator: reads any Excel format, picks worker skills, dispatches tasks
 - **Worker** — Runs AI-powered browser agent with pluggable skill system
 
+## Implementation Status
+
+| Service | Status | Notes |
+|---|---|---|
+| **UI** | ✅ Done | Dashboard with upload, execution tracking, and results display |
+| **Distributor** | ⬜ Not started | `distributor/app.py` is scaffolded (stub only) |
+| **Worker** | ⬜ Not started | `worker/app.py` is scaffolded; `agent.py` and `browser.py` exist but need integration |
+
 ## Repository Structure
 
 ```
