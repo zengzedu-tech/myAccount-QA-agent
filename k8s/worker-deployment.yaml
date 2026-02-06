@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-agent-worker
+  labels:
+    app: qa-agent-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qa-agent-worker
+  template:
+    metadata:
+      labels:
+        app: qa-agent-worker
+    spec:
+      containers:
+        - name: worker
+          image: qa-agent-worker:latest
+          ports:
+            - containerPort: 8090
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qa-agent-secrets
+                  key: gemini-api-key
+            - name: HEADLESS
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
