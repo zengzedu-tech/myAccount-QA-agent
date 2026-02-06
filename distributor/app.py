@@ -16,7 +16,6 @@ from fastapi.responses import FileResponse
 
 app = FastAPI(title="QA Agent Distributor Service")
 logger = logging.getLogger("distributor")
-logging.basicConfig(level=logging.INFO)
 
 WORKER_URL = os.getenv("WORKER_URL", "http://localhost:8090")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -27,6 +26,9 @@ GEMINI_API_URL = (
 
 # In-memory storage for test runs and tasks
 test_runs: dict[str, dict] = {}
+
+# Cache for worker skills (refreshed on each test run)
+_cached_skills: list[dict] | None = None
 
 # Temp directory for screenshots received from workers
 SCREENSHOT_DIR = Path(tempfile.gettempdir()) / "qa-agent-screenshots"
@@ -69,10 +71,13 @@ async def create_test_run(
     if not raw_text.strip():
         raise HTTPException(status_code=400, detail="Excel file appears to be empty")
 
+    # Discover available worker skills
+    skills = await _fetch_worker_skills()
+
     # Use Gemini AI to analyze the spreadsheet and extract tasks
     user_description = description.strip()
     try:
-        tasks = await _ai_parse_test_plan(raw_text, user_description)
+        tasks = await _ai_parse_test_plan(raw_text, user_description, skills)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -97,6 +102,7 @@ async def create_test_run(
         task_id = str(uuid.uuid4())
         run["tasks"][task_id] = {
             "task_id": task_id,
+            "skill": task.get("skill", "login_checker"),
             "target_url": task["target_url"],
             "username": task["username"],
             "password": task["password"],
@@ -133,6 +139,7 @@ def get_test_run(run_id: str):
         tasks_list.append({
             "task_id": task["task_id"],
             "target_url": task["target_url"],
+            "skill": task.get("skill", "login_checker"),
             "status": task["status"],
             "result": task["result"],
         })
@@ -189,15 +196,42 @@ async def receive_task_result(run_id: str, task_id: str, result: dict):
 
 
 # ---------------------------------------------------------------------------
+# Worker skill discovery
+# ---------------------------------------------------------------------------
+
+async def _fetch_worker_skills() -> list[dict]:
+    """Query the worker's GET /api/skills endpoint to discover available skills."""
+    global _cached_skills
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{WORKER_URL}/api/skills")
+        if resp.status_code == 200:
+            data = resp.json()
+            _cached_skills = data.get("skills", [])
+            return _cached_skills
+    except Exception as e:
+        logger.warning("Could not fetch worker skills: %s", e)
+
+    # Return cached skills or a sensible default
+    if _cached_skills is not None:
+        return _cached_skills
+    return [{"name": "login_checker", "description": "Test website login flow and record basic account information."}]
+
+
+# ---------------------------------------------------------------------------
 # AI-powered Excel parsing via Gemini
 # ---------------------------------------------------------------------------
 
-PARSE_PROMPT = """\
+PARSE_PROMPT_TEMPLATE = """\
 You are a QA test plan parser. You will receive the raw text content of an Excel spreadsheet, and optionally a description from the user explaining what they want to test.
 
 Your job is to analyze the spreadsheet — regardless of how columns are named, ordered, or formatted — and extract a list of QA test tasks.
 
+AVAILABLE WORKER SKILLS:
+{skills_section}
+
 For each row that represents a test case, extract:
+- **skill**: Which worker skill to use (pick the best match from the available skills above). If unsure, default to "login_checker".
 - **target_url**: The website URL / login page to test
 - **username**: The login username or email
 - **password**: The login password
@@ -211,14 +245,27 @@ Rules:
 - If a column has short strings that look like passwords, that's the password
 - Any remaining notes/comments columns contribute to the per-row instructions
 - If the user provided a description, prepend it to each task's instructions so the worker agent understands the overall testing goal
+- Choose the most appropriate skill for each task based on the spreadsheet context and user description
 - If you cannot identify the required fields (target_url, username, password), return an empty array
 
 Respond with ONLY a valid JSON array. No markdown, no explanation. Example:
 [
-  {{"target_url": "https://example.com/login", "username": "user@test.com", "password": "Pass123", "instructions": "After login, navigate to the rewards page and verify the points balance is displayed."}},
-  {{"target_url": "https://other.com/login", "username": "admin@test.com", "password": "Secret1", "instructions": "After login, check the offers section."}}
+  {{"skill": "login_checker", "target_url": "https://example.com/login", "username": "user@test.com", "password": "Pass123", "instructions": "After login, navigate to the rewards page and verify the points balance is displayed."}},
+  {{"skill": "login_checker", "target_url": "https://other.com/login", "username": "admin@test.com", "password": "Secret1", "instructions": "After login, navigate to the rewards page and verify the points balance is displayed. Also check the offers section."}}
 ]
 """
+
+
+def _build_parse_prompt(skills: list[dict]) -> str:
+    """Build the AI prompt with the list of available worker skills."""
+    if skills:
+        lines = []
+        for s in skills:
+            lines.append(f'- "{s["name"]}": {s["description"]}')
+        skills_section = "\n".join(lines)
+    else:
+        skills_section = '- "login_checker": Test website login flow and record basic account information.'
+    return PARSE_PROMPT_TEMPLATE.format(skills_section=skills_section)
 
 
 def _excel_to_text(path: Path) -> str:
@@ -246,12 +293,18 @@ def _excel_to_text(path: Path) -> str:
     return "\n".join(lines)
 
 
-async def _ai_parse_test_plan(raw_text: str, user_description: str = "") -> list[dict]:
+async def _ai_parse_test_plan(
+    raw_text: str,
+    user_description: str = "",
+    skills: list[dict] | None = None,
+) -> list[dict]:
     """Send the spreadsheet text to Gemini and get structured task data back."""
     url = GEMINI_API_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
 
+    parse_prompt = _build_parse_prompt(skills or [])
+
     # Build the full prompt with optional user description
-    prompt_parts = [PARSE_PROMPT]
+    prompt_parts = [parse_prompt]
     if user_description:
         prompt_parts.append(f"USER DESCRIPTION:\n{user_description}\n")
     prompt_parts.append(f"SPREADSHEET CONTENT:\n{raw_text}")
@@ -314,9 +367,11 @@ async def _ai_parse_test_plan(raw_text: str, user_description: str = "") -> list
         username = str(t.get("username", "")).strip()
         password = str(t.get("password", "")).strip()
         instructions = str(t.get("instructions", "")).strip()
+        skill = str(t.get("skill", "login_checker")).strip()
 
         if target_url and username and password:
             valid_tasks.append({
+                "skill": skill,
                 "target_url": target_url,
                 "username": username,
                 "password": password,
@@ -362,7 +417,7 @@ async def _dispatch_single_task(
 
     payload = {
         "task_id": task_id,
-        "type": "login_test",
+        "skill": task.get("skill", "login_checker"),
         "target_url": task["target_url"],
         "credentials": {
             "username": task["username"],
@@ -376,16 +431,14 @@ async def _dispatch_single_task(
         resp.raise_for_status()
         result = resp.json()
     except Exception as e:
-        logger.error("Worker request failed for task %s: %s", task_id, e)
         result = {
             "task_id": task_id,
+            "skill": task.get("skill", "login_checker"),
             "success": False,
             "summary": f"Worker request failed: {e}",
-            "account_info": "",
-            "offers": "",
+            "data": {},
             "screenshots": [],
             "logs": [],
-            "duration": None,
         }
 
     _apply_result(run, task_id, result)
