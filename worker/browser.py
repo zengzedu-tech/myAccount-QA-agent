@@ -172,6 +172,7 @@ def _find_chrome() -> str:
             return path
     raise FileNotFoundError(
         "Chrome/Chromium not found. Checked:\n" + "\n".join(f"  {c}" for c in candidates)
+        "Chrome/Edge not found. Checked:\n" + "\n".join(f"  {c}" for c in candidates)
     )
 
 
@@ -181,6 +182,8 @@ class BrowserSession:
     def __init__(self, headless: bool = True, screenshot_dir: str = "screenshots"):
         self.headless = headless
         self.screenshot_dir = screenshot_dir
+    def __init__(self, headless: bool = True):
+        self.headless = headless
         self._process = None
         self._ws: _WebSocket | None = None
         self._msg_id = 0
@@ -225,6 +228,7 @@ class BrowserSession:
                     f"http://localhost:{self._port}/json", timeout=2
                 )
                 pages = json.loads(resp.read())
+                # Find the actual browser page, not extension background pages
                 for page in pages:
                     if page.get("type") == "page" and not page.get("url", "").startswith("chrome-extension://"):
                         ws_url = page["webSocketDebuggerUrl"]
@@ -271,6 +275,7 @@ class BrowserSession:
                 if "error" in data:
                     raise RuntimeError(f"CDP error: {data['error']}")
                 return data.get("result", {})
+            # else it's an event — ignore and keep reading
 
     def _eval(self, expression: str) -> str:
         """Evaluate JS in the page and return the string result."""
@@ -284,11 +289,13 @@ class BrowserSession:
         return str(val.get("value", ""))
 
     # -- Browser tools -------------------------------------------------------
+    # -- Browser tools (same interface as before) ----------------------------
 
     def navigate(self, url: str) -> str:
         """Navigate to a URL, wait for Cloudflare if needed, return page title."""
         self._send("Page.navigate", {"url": url})
         time.sleep(3)
+        # Wait for Cloudflare challenge to resolve
         for _ in range(15):
             title = self._eval("document.title")
             if "cloudflare" not in title.lower() and "attention required" not in title.lower():
@@ -300,6 +307,7 @@ class BrowserSession:
     def click(self, selector: str) -> str:
         """Click an element using CDP mouse events for framework compatibility."""
         safe_sel = json.dumps(selector)
+        # Get element center coordinates
         coords = self._eval(
             f"(function(){{"
             f"  var el=document.querySelector({safe_sel});"
@@ -313,6 +321,7 @@ class BrowserSession:
             return f"Element '{selector}' not found."
         pos = json.loads(coords)
         x, y = pos["x"], pos["y"]
+        # Dispatch real mouse events via CDP
         for etype in ("mousePressed", "mouseReleased"):
             self._send("Input.dispatchMouseEvent", {
                 "type": etype,
@@ -328,6 +337,7 @@ class BrowserSession:
     def fill(self, selector: str, value: str) -> str:
         """Fill a form field using CDP keyboard input (works with all frameworks)."""
         safe_sel = json.dumps(selector)
+        # Focus the element and select any existing text so it gets replaced
         found = self._eval(
             f"(function(){{"
             f"  var el=document.querySelector({safe_sel});"
@@ -341,6 +351,11 @@ class BrowserSession:
             return f"Element '{selector}' not found."
         self._send("Input.insertText", {"text": value})
         time.sleep(0.2)
+        # Use CDP Input.insertText to simulate real keyboard input —
+        # this fires native browser events that all frameworks detect.
+        self._send("Input.insertText", {"text": value})
+        time.sleep(0.2)
+        # Dispatch a change event for frameworks that listen on blur/change
         self._eval(
             f"(function(){{"
             f"  var el=document.querySelector({safe_sel});"
@@ -375,6 +390,11 @@ class BrowserSession:
         result = self._send("Page.captureScreenshot", {"format": "png"})
         data = base64.b64decode(result["data"])
         path = os.path.join(self.screenshot_dir, filename)
+        """Take a screenshot and save it."""
+        os.makedirs("screenshots", exist_ok=True)
+        result = self._send("Page.captureScreenshot", {"format": "png"})
+        data = base64.b64decode(result["data"])
+        path = os.path.join("screenshots", filename)
         with open(path, "wb") as f:
             f.write(data)
         return f"Screenshot saved to {path}"
@@ -433,6 +453,108 @@ class BrowserSession:
 # ---------------------------------------------------------------------------
 # Tool execution dispatcher
 # ---------------------------------------------------------------------------
+
+# Tool definitions (unchanged — used by agent.py)
+# ---------------------------------------------------------------------------
+
+TOOL_DEFINITIONS = [
+    {
+        "name": "navigate",
+        "description": "Navigate the browser to a URL.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to navigate to."}
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "click",
+        "description": "Click an element on the page by CSS selector.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector of the element to click.",
+                }
+            },
+            "required": ["selector"],
+        },
+    },
+    {
+        "name": "fill",
+        "description": "Type text into a form field identified by CSS selector.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector of the input field.",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The text to type into the field.",
+                },
+            },
+            "required": ["selector", "value"],
+        },
+    },
+    {
+        "name": "get_page_text",
+        "description": "Get the visible text content of the current page.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_page_html",
+        "description": "Get the HTML source of the current page to inspect its structure and find selectors.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "screenshot",
+        "description": "Take a screenshot of the current page.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Filename for the screenshot (default: screenshot.png).",
+                }
+            },
+        },
+    },
+    {
+        "name": "get_current_url",
+        "description": "Get the current page URL.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "press_key",
+        "description": "Press a keyboard key (e.g. 'Enter', 'Tab').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "The key to press."}
+            },
+            "required": ["key"],
+        },
+    },
+    {
+        "name": "wait",
+        "description": "Wait for a specified duration in milliseconds.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ms": {
+                    "type": "integer",
+                    "description": "Milliseconds to wait (default: 2000).",
+                }
+            },
+        },
+    },
+]
+
 
 def execute_tool(session: BrowserSession, tool_name: str, tool_input: dict) -> str:
     """Execute a browser tool by name and return the result."""

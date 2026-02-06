@@ -1,3 +1,2 @@
-google-genai>=1.0.0
-playwright>=1.48.0
-python-dotenv>=1.0.0
+# No external dependencies — this project uses only Python standard library.
+# Just needs Python 3.10+ and Chrome/Edge installed on the system.

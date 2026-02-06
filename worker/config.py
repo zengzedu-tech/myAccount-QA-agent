@@ -17,6 +17,7 @@ def _load_dotenv(path=None):
             key, _, value = line.partition("=")
             key = key.strip()
             value = value.strip()
+            # Strip surrounding quotes
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
                 value = value[1:-1]
             os.environ.setdefault(key, value)

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-agent-ui
+spec:
+  type: LoadBalancer
+  selector:
+    app: qa-agent-ui
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
