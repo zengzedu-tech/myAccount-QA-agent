@@ -6,7 +6,7 @@
 
 The platform consists of 3 microservices deployed on GKE:
 - **UI** — Web frontend for uploading test plans and viewing results
-- **Distributor** — Parses test plans (Excel) and dispatches tasks to workers
+- **Distributor** — AI-powered orchestrator: reads any Excel format, dispatches tasks to workers
 - **Worker** — Runs the AI-powered browser agent against target sites
 
 ## Repository Structure
@@ -19,9 +19,9 @@ myAccount-QA-agent/
 │   └── requirements.txt
 │
 ├── distributor/               # Backend orchestrator service (port 8080)
-│   ├── app.py                 # FastAPI app — test run management
+│   ├── app.py                 # FastAPI app — FULLY IMPLEMENTED
 │   ├── Dockerfile
-│   └── requirements.txt
+│   └── requirements.txt       # fastapi, uvicorn, openpyxl, httpx, python-multipart
 │
 ├── worker/                    # Browser agent service (port 8090)
 │   ├── app.py                 # FastAPI wrapper — /api/execute endpoint
@@ -56,12 +56,15 @@ myAccount-QA-agent/
 - Calls Distributor API at `DISTRIBUTOR_URL` env var
 - Tech: FastAPI + Jinja2 templates + httpx
 
-### Distributor Service (port 8080)
-- `POST /api/test-runs` — Upload Excel test plan, parse rows, create tasks, dispatch to workers
+### Distributor Service (port 8080) — FULLY IMPLEMENTED
+- AI-powered Excel parser using Gemini (handles any column naming/format)
+- Accepts optional user description to guide test execution
+- `POST /api/test-runs` — Upload Excel + optional description, AI-parse, dispatch to workers
 - `GET /api/test-runs/{run_id}` — Poll status and aggregated results
 - `GET /api/test-runs/{run_id}/tasks/{task_id}/screenshots/{filename}` — Download screenshot
+- `POST /api/test-runs/{run_id}/tasks/{task_id}/result` — Callback for workers to push results
 - Calls Worker API at `WORKER_URL` env var
-- Tech: FastAPI + openpyxl
+- Tech: FastAPI + openpyxl + httpx + Gemini AI
 
 ### Worker Service (port 8090)
 - `POST /api/execute` — Run a single QA test task (login, capture info, screenshots)
@@ -111,13 +114,32 @@ Implement a single-page web app with 3 sections:
 
 Tech: FastAPI + Jinja2 templates + httpx. The UI calls the Distributor API — it does NOT call the Worker directly.
 
-### Distributor Agent — `distributor/` folder only
+### Distributor Agent — `distributor/` folder only — DONE
 
-Implement the orchestration backend:
+All endpoints implemented with AI-powered Excel parsing. See "Distributor Implementation Details" below.
 
-1. **`POST /api/test-runs`** — Accept Excel file upload. Parse rows with openpyxl. Expected columns: `target_url`, `username`, `password`, `instructions` (optional). Create a `run_id` (uuid4). For each row, create a task and dispatch it to the Worker at `WORKER_URL/api/execute` asynchronously (use `httpx.AsyncClient` or background threads). Store run and task state in memory (dict).
+## Distributor Implementation Details
 
-2. **`GET /api/test-runs/{run_id}`** — Return run status and all task results. Response shape:
+### How Upload Works (POST /api/test-runs)
+
+1. Accepts multipart form: `file` (Excel .xlsx) + `description` (optional text)
+2. Converts Excel to text via `_excel_to_text()` (pipe-delimited, all rows)
+3. Sends spreadsheet text + user description to **Gemini AI**
+4. Gemini returns a JSON array where each item has: `target_url`, `username`, `password`, `instructions`
+5. Creates a run (in-memory dict), dispatches all tasks concurrently to workers
+6. Returns `run_id` immediately — tasks execute in background
+
+### AI-Powered Excel Parsing
+
+The distributor does NOT require fixed column names. The Gemini prompt:
+- Receives the raw spreadsheet text (any format, any column names)
+- Receives the optional USER DESCRIPTION
+- Returns structured JSON with extracted fields per row
+
+This means Excel files with columns like "Site URL", "Email", "pwd", "Login Page", "User Account", etc. all work automatically.
+
+### Poll Response (GET /api/test-runs/{run_id})
+
 ```json
 {
   "run_id": "uuid",
@@ -135,11 +157,12 @@ Implement the orchestration backend:
 }
 ```
 
-3. **`GET /api/test-runs/{run_id}/tasks/{task_id}/screenshots/{filename}`** — Proxy screenshot files returned by the Worker. Store screenshots in a local temp directory.
+### Screenshot Flow
 
-4. **`POST /api/test-runs/{run_id}/tasks/{task_id}/result`** — Callback endpoint for workers to post results back (alternative to synchronous dispatch).
-
-Tech: FastAPI + openpyxl + httpx. The Distributor calls the Worker API — it does NOT run browser automation itself.
+1. Worker saves screenshots to `screenshots/{task_id}/`
+2. Worker serves them at `GET /api/screenshots/{task_id}/{filename}`
+3. Distributor downloads them after task completes to local temp dir
+4. UI/clients access via `GET /api/test-runs/{run_id}/tasks/{task_id}/screenshots/{filename}`
 
 ### Worker Agent — `worker/` folder only
 
@@ -161,21 +184,15 @@ Tech: FastAPI + existing CDP agent. Do NOT rewrite `agent.py` or `browser.py` �
 
 ### Excel Test Plan Format (shared knowledge for all agents)
 
-The uploaded `.xlsx` file has these columns (row 1 = headers):
+The uploaded `.xlsx` file can use **any column naming convention**. The AI parser handles all formats. Examples:
 
-| Column | Required | Description |
-|---|---|---|
-| `target_url` | Yes | Login page URL to test |
-| `username` | Yes | Login username/email |
-| `password` | Yes | Login password |
-| `instructions` | No | Extra instructions for the agent |
+```
+target_url              | username        | password  | instructions
+Site URL                | Email           | pwd       | Notes
+Login Page              | User Account    | Secret    | Extra Steps
+```
 
-Example:
-```
-target_url                                          | username        | password  | instructions
-https://myaccount-s.westlakefinancial.com/.../login | user@test.com   | Pass123   |
-https://another-site.com/login                      | admin@test.com  | Secret1   | Check rewards page too
-```
+The AI identifies URLs, usernames, passwords, and instructions regardless of header names.
 
 ## Getting Started (Local Standalone)
 
@@ -196,10 +213,11 @@ python main.py
 
 | Variable | Description |
 |---|---|
-| `GEMINI_API_KEY` | Google Gemini API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)) |
-| `TARGET_URL` | Login page URL to test |
-| `LOGIN_USERNAME` | Username/email for login |
-| `LOGIN_PASSWORD` | Password for login |
+| `GEMINI_API_KEY` | Google Gemini API key — needed by both Distributor (AI parsing) and Worker (browser agent) |
+| `GEMINI_MODEL` | (Distributor) Gemini model for parsing (default: `gemini-2.0-flash`) |
+| `TARGET_URL` | (Legacy CLI) Login page URL to test |
+| `LOGIN_USERNAME` | (Legacy CLI) Username/email for login |
+| `LOGIN_PASSWORD` | (Legacy CLI) Password for login |
 | `HEADLESS` | Run browser headless (default: `true`) |
 | `DISTRIBUTOR_URL` | (UI only) Distributor service URL |
 | `WORKER_URL` | (Distributor only) Worker service URL |
@@ -223,4 +241,4 @@ python main.py
 - Config via `.env` file (never commit secrets)
 - Monorepo with per-service Dockerfiles
 - GKE deployment with 3 Deployments + Services
-- Worker stores Gemini API key in K8s Secret (`qa-agent-secrets`)
+- Both Distributor and Worker use Gemini API key from K8s Secret (`qa-agent-secrets`)
