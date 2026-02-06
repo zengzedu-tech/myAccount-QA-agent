@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html class="light" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>QA Testing Agent Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "primary": "#2463eb",
+                    "background-light": "#f6f6f8",
+                    "background-dark": "#111621",
+                },
+                fontFamily: {
+                    "display": ["Inter", "sans-serif"]
+                },
+                borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+            },
+        },
+    }
+</script>
+<style>
+    body { min-height: max(884px, 100dvh); }
+    .terminal-scroll::-webkit-scrollbar { width: 4px }
+    .terminal-scroll::-webkit-scrollbar-track { background: #1e1e2e }
+    .terminal-scroll::-webkit-scrollbar-thumb { background: #4a4a6a; border-radius: 10px }
+    .custom-dashed {
+        border: 2px dashed #d1d5db;
+        transition: border-color 0.2s, background-color 0.2s;
+    }
+    .custom-dashed.drag-over {
+        border-color: #2463eb;
+        background-color: rgba(36, 99, 235, 0.05);
+    }
+    .fade-in { animation: fadeIn 0.3s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+
+<body class="bg-background-light dark:bg-background-dark font-display text-[#111318] dark:text-white min-h-screen">
+
+<!-- Top Navigation Bar -->
+<header class="sticky top-0 z-40 w-full bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+        <span class="material-symbols-outlined text-primary text-2xl">smart_toy</span>
+        <h1 class="text-lg font-bold tracking-tight">QA Agent</h1>
+    </div>
+    <div class="flex items-center gap-3">
+        <button onclick="toggleDarkMode()" class="flex items-center justify-center size-10 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+            <span class="material-symbols-outlined text-gray-600 dark:text-gray-400" id="theme-icon">dark_mode</span>
+        </button>
+        <div class="size-8 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden border border-primary/20">
+            <span class="material-symbols-outlined text-primary text-xl">account_circle</span>
+        </div>
+    </div>
+</header>
+
+<main class="p-4 flex flex-col gap-6 max-w-lg mx-auto pb-24">
+
+    <!-- Section 1: Upload Test Plan -->
+    <section id="upload-section" class="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden fade-in">
+        <div class="p-4 border-b border-gray-50 dark:border-gray-800">
+            <h2 class="text-base font-semibold">Upload Test Plan</h2>
+        </div>
+        <div class="p-4 flex flex-col gap-4">
+            <!-- Drop zone -->
+            <div id="drop-zone" class="custom-dashed rounded-lg p-8 flex flex-col items-center justify-center gap-3 bg-gray-50/50 dark:bg-gray-800/30 cursor-pointer"
+                 onclick="document.getElementById('file-input').click()">
+                <input type="file" id="file-input" class="hidden" accept=".xlsx,.xls,.csv" />
+                <div class="size-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span class="material-symbols-outlined text-primary text-3xl">upload_file</span>
+                </div>
+                <div class="text-center">
+                    <p class="text-sm font-medium" id="file-label">Excel or CSV files</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" id="file-sublabel">Tap to browse or drag & drop</p>
+                </div>
+                <button type="button" class="mt-2 text-xs font-bold text-primary px-4 py-2 bg-primary/10 rounded-lg" onclick="event.stopPropagation(); document.getElementById('file-input').click()">
+                    Browse Files
+                </button>
+            </div>
+
+            <!-- Instructions -->
+            <div>
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider block mb-2">Additional Instructions</label>
+                <textarea id="instructions-input" class="w-full rounded-lg border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm focus:ring-primary focus:border-primary p-3 min-h-[100px]"
+                          placeholder="Define environment variables, specific selectors, or browser constraints..."></textarea>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex flex-col gap-2 pt-2">
+                <button id="run-btn" onclick="uploadAndRun()" disabled
+                        class="w-full bg-primary text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span class="material-symbols-outlined text-lg" id="run-btn-icon">play_arrow</span>
+                    <span id="run-btn-text">Run Tests</span>
+                </button>
+                <a href="/api/sample-template" download
+                   class="w-full bg-transparent text-gray-600 dark:text-gray-400 font-semibold py-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-sm text-center">
+                    View Sample Template
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Section 2: Test Execution (hidden until running) -->
+    <section id="execution-section" class="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden hidden fade-in">
+        <div class="p-4 border-b border-gray-50 dark:border-gray-800 flex items-center justify-between">
+            <h2 class="text-base font-semibold">Test Execution</h2>
+            <span id="execution-badge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                <span class="size-1.5 rounded-full bg-blue-600 animate-pulse"></span>
+                Running
+            </span>
+        </div>
+        <div class="p-4">
+            <!-- Progress bar -->
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400" id="progress-label">Initializing...</span>
+                <span class="text-xs font-bold text-primary" id="progress-pct">0%</span>
+            </div>
+            <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-1.5 mb-4">
+                <div id="progress-bar" class="bg-primary h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+
+            <!-- Task status table -->
+            <div id="task-table" class="mb-4 hidden">
+                <div class="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
+                    <table class="w-full text-xs">
+                        <thead class="bg-gray-50 dark:bg-gray-800">
+                            <tr>
+                                <th class="text-left p-2 font-semibold text-gray-500">Target URL</th>
+                                <th class="text-left p-2 font-semibold text-gray-500">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="task-table-body" class="divide-y divide-gray-50 dark:divide-gray-800">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Terminal log -->
+            <div id="terminal" class="bg-[#1E1E2E] rounded-lg p-4 font-mono text-[11px] leading-relaxed terminal-scroll h-64 overflow-y-auto">
+                <div class="text-[#f59e0b] mb-1">[Init] Uploading test plan...</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Section 3: Results Summary (hidden until done) -->
+    <section id="results-section" class="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden hidden fade-in">
+        <div class="p-4 border-b border-gray-50 dark:border-gray-800 flex items-center justify-between">
+            <h2 class="text-base font-semibold">Results Summary</h2>
+            <button onclick="resetDashboard()" class="text-primary text-xs font-bold">New Run</button>
+        </div>
+
+        <!-- Stats grid -->
+        <div id="stats-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-2 p-4 bg-gray-50/50 dark:bg-gray-800/20">
+            <div class="flex flex-col">
+                <span class="text-[10px] text-gray-500 uppercase font-bold">Total</span>
+                <span class="text-lg font-bold" id="stat-total">0</span>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-[10px] text-green-500 uppercase font-bold">Passed</span>
+                <span class="text-lg font-bold text-green-600" id="stat-passed">0</span>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-[10px] text-red-500 uppercase font-bold">Failed</span>
+                <span class="text-lg font-bold text-red-600" id="stat-failed">0</span>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-[10px] text-gray-500 uppercase font-bold">Duration</span>
+                <span class="text-lg font-bold" id="stat-duration">--</span>
+            </div>
+        </div>
+
+        <!-- Test result items -->
+        <div id="results-list" class="divide-y divide-gray-100 dark:divide-gray-800">
+        </div>
+    </section>
+
+</main>
+
+<!-- Bottom Navigation -->
+<nav class="fixed bottom-0 left-0 w-full bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 px-6 py-2 flex justify-between items-center z-50">
+    <div class="flex flex-col items-center gap-1 text-primary cursor-pointer" onclick="scrollToSection('upload-section')">
+        <span class="material-symbols-outlined">dashboard</span>
+        <span class="text-[10px] font-bold">Dashboard</span>
+    </div>
+    <div class="flex flex-col items-center gap-1 text-gray-400 cursor-pointer" onclick="scrollToSection('results-section')">
+        <span class="material-symbols-outlined">history</span>
+        <span class="text-[10px] font-bold">Results</span>
+    </div>
+    <div class="flex flex-col items-center gap-1 text-gray-400 cursor-pointer" onclick="toggleDarkMode()">
+        <span class="material-symbols-outlined">settings</span>
+        <span class="text-[10px] font-bold">Settings</span>
+    </div>
+</nav>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let currentRunId = null;
+let pollInterval = null;
+let selectedFile = null;
+let runStartTime = null;
+
+// ---------------------------------------------------------------------------
+// Dark mode
+// ---------------------------------------------------------------------------
+function toggleDarkMode() {
+    document.documentElement.classList.toggle('dark');
+    const icon = document.getElementById('theme-icon');
+    icon.textContent = document.documentElement.classList.contains('dark') ? 'light_mode' : 'dark_mode';
+}
+
+// ---------------------------------------------------------------------------
+// File selection & drag-drop
+// ---------------------------------------------------------------------------
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const fileLabel = document.getElementById('file-label');
+const fileSublabel = document.getElementById('file-sublabel');
+const runBtn = document.getElementById('run-btn');
+
+fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) selectFile(e.target.files[0]);
+});
+
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) selectFile(e.dataTransfer.files[0]);
+});
+
+function selectFile(file) {
+    selectedFile = file;
+    fileLabel.textContent = file.name;
+    fileSublabel.textContent = `${(file.size / 1024).toFixed(1)} KB — tap to change`;
+    runBtn.disabled = false;
+}
+
+// ---------------------------------------------------------------------------
+// Terminal logger
+// ---------------------------------------------------------------------------
+function log(msg, color = '#a0a0c0') {
+    const terminal = document.getElementById('terminal');
+    const line = document.createElement('div');
+    line.style.color = color;
+    line.textContent = msg;
+    terminal.appendChild(line);
+    terminal.scrollTop = terminal.scrollHeight;
+}
+
+function logPhase(msg)   { log(msg, '#f59e0b'); }
+function logSuccess(msg) { log('\u2713 ' + msg, '#22c55e'); }
+function logAction(msg)  { log('ACTION: ' + msg, '#2463eb'); }
+function logError(msg)   { log('ERROR: ' + msg, '#ef4444'); }
+
+// ---------------------------------------------------------------------------
+// Upload & Run
+// ---------------------------------------------------------------------------
+async function uploadAndRun() {
+    if (!selectedFile) return;
+
+    // Disable button, show spinner
+    runBtn.disabled = true;
+    document.getElementById('run-btn-icon').textContent = 'hourglass_empty';
+    document.getElementById('run-btn-text').textContent = 'Uploading...';
+
+    // Show execution section
+    const execSection = document.getElementById('execution-section');
+    execSection.classList.remove('hidden');
+    execSection.scrollIntoView({ behavior: 'smooth' });
+
+    // Clear terminal
+    document.getElementById('terminal').innerHTML = '';
+    logPhase('[Init] Uploading test plan...');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    const instructions = document.getElementById('instructions-input').value.trim();
+    formData.append('instructions', instructions);
+
+    try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            logError(`Upload failed (${resp.status}): ${errText}`);
+            resetRunBtn();
+            return;
+        }
+        const data = await resp.json();
+        currentRunId = data.run_id;
+        runStartTime = Date.now();
+
+        logSuccess('Test plan uploaded');
+        logPhase(`[Run ${currentRunId.slice(0, 8)}] Dispatching ${data.total_tasks || '?'} task(s)...`);
+
+        document.getElementById('run-btn-icon').textContent = 'pending';
+        document.getElementById('run-btn-text').textContent = 'Running...';
+
+        startPolling();
+    } catch (err) {
+        logError(`Network error: ${err.message}`);
+        resetRunBtn();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Polling
+// ---------------------------------------------------------------------------
+function startPolling() {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(pollStatus, 3000);
+    pollStatus(); // immediate first poll
+}
+
+function stopPolling() {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+}
+
+async function pollStatus() {
+    if (!currentRunId) return;
+    try {
+        const resp = await fetch(`/api/runs/${currentRunId}`);
+        if (!resp.ok) {
+            logError(`Poll failed (${resp.status})`);
+            return;
+        }
+        const data = await resp.json();
+        updateExecution(data);
+
+        if (data.status === 'completed' || data.status === 'failed') {
+            stopPolling();
+            onRunComplete(data);
+        }
+    } catch (err) {
+        logError(`Poll error: ${err.message}`);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Update execution view
+// ---------------------------------------------------------------------------
+function updateExecution(data) {
+    const total = data.total_tasks || 0;
+    const completed = data.completed_tasks || 0;
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    document.getElementById('progress-pct').textContent = `${pct}%`;
+    document.getElementById('progress-bar').style.width = `${pct}%`;
+
+    const running = (data.tasks || []).filter(t => t.status === 'running').length;
+    const pending = (data.tasks || []).filter(t => t.status === 'pending').length;
+    document.getElementById('progress-label').textContent =
+        `${completed}/${total} completed \u2022 ${running} running \u2022 ${pending} pending`;
+
+    // Update badge
+    const badge = document.getElementById('execution-badge');
+    if (data.status === 'completed') {
+        badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
+        badge.innerHTML = '<span class="material-symbols-outlined text-sm">check_circle</span> Done';
+    } else if (data.status === 'failed') {
+        badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300';
+        badge.innerHTML = '<span class="material-symbols-outlined text-sm">error</span> Failed';
+    }
+
+    // Task table
+    const tasks = data.tasks || [];
+    if (tasks.length > 0) {
+        document.getElementById('task-table').classList.remove('hidden');
+        const tbody = document.getElementById('task-table-body');
+        tbody.innerHTML = '';
+        tasks.forEach(task => {
+            const statusColors = {
+                pending:   'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+                running:   'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+                completed: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+                failed:    'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+            };
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="p-2 truncate max-w-[200px]">${escapeHtml(task.target_url || task.task_id)}</td>
+                <td class="p-2"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${statusColors[task.status] || ''}">${task.status}</span></td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    // Terminal log updates for newly completed tasks
+    tasks.forEach(task => {
+        if (task.status === 'completed' && task.result && !task._logged) {
+            task._logged = true;
+            const success = task.result.success;
+            if (success) {
+                logSuccess(`Task ${task.task_id.slice(0, 8)} passed — ${task.target_url}`);
+            } else {
+                logError(`Task ${task.task_id.slice(0, 8)} failed — ${task.target_url}`);
+            }
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Run complete — show results
+// ---------------------------------------------------------------------------
+function onRunComplete(data) {
+    const elapsed = runStartTime ? ((Date.now() - runStartTime) / 1000) : 0;
+    logPhase(`[Done] Run completed in ${formatDuration(elapsed)}`);
+
+    // Show results section
+    const resultsSection = document.getElementById('results-section');
+    resultsSection.classList.remove('hidden');
+
+    const tasks = data.tasks || [];
+    const passed = tasks.filter(t => t.result && t.result.success).length;
+    const failed = tasks.length - passed;
+
+    document.getElementById('stat-total').textContent = tasks.length;
+    document.getElementById('stat-passed').textContent = passed;
+    document.getElementById('stat-failed').textContent = failed;
+    document.getElementById('stat-duration').textContent = formatDuration(elapsed);
+
+    // Build result items
+    const resultsList = document.getElementById('results-list');
+    resultsList.innerHTML = '';
+
+    tasks.forEach((task, idx) => {
+        const success = task.result && task.result.success;
+        const duration = task.result && task.result.duration != null
+            ? `${task.result.duration.toFixed(1)}s` : '--';
+        const summary = (task.result && task.result.summary) || 'No summary available';
+        const accountInfo = (task.result && task.result.account_info) || '';
+        const offers = (task.result && task.result.offers) || '';
+        const screenshots = (task.result && task.result.screenshots) || [];
+        const logs = (task.result && task.result.logs) || [];
+        const url = task.target_url || task.task_id;
+
+        const itemDiv = document.createElement('div');
+        itemDiv.innerHTML = `
+            <!-- Collapsed header -->
+            <div class="p-4 flex items-center justify-between cursor-pointer" onclick="toggleResult(this)">
+                <div class="flex items-center gap-3">
+                    <span class="material-symbols-outlined ${success ? 'text-green-500' : 'text-red-500'}">${success ? 'check_circle' : 'error'}</span>
+                    <div>
+                        <p class="text-sm font-medium truncate max-w-[250px]">${escapeHtml(url)}</p>
+                        <p class="text-[10px] text-gray-500">${success ? 'Passed' : 'Failed'} \u2022 Duration: ${duration}</p>
+                    </div>
+                </div>
+                <span class="material-symbols-outlined text-gray-400 expand-icon">expand_more</span>
+            </div>
+            <!-- Expanded detail (hidden) -->
+            <div class="result-detail hidden bg-gray-50/30 dark:bg-gray-800/20 border-t border-gray-50 dark:border-gray-800">
+                <div class="p-4 space-y-4">
+                    ${summary ? `
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-400 uppercase mb-1">Agent Summary</p>
+                        <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed">${escapeHtml(summary)}</p>
+                    </div>` : ''}
+                    ${accountInfo ? `
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-400 uppercase mb-1">Account Info</p>
+                        <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHtml(accountInfo)}</p>
+                    </div>` : ''}
+                    ${offers ? `
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-400 uppercase mb-1">Offers</p>
+                        <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHtml(offers)}</p>
+                    </div>` : ''}
+                    ${screenshots.length > 0 ? `
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-400 uppercase mb-2">Captured Screenshots</p>
+                        <div class="flex gap-2 overflow-x-auto pb-2">
+                            ${screenshots.map(fname => `
+                            <a href="/api/runs/${currentRunId}/tasks/${task.task_id}/screenshots/${fname}" target="_blank"
+                               class="flex-shrink-0 relative group">
+                                <div class="w-32 h-20 rounded-lg bg-gray-200 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-700">
+                                    <img class="w-full h-full object-cover" src="/api/runs/${currentRunId}/tasks/${task.task_id}/screenshots/${fname}" alt="${escapeHtml(fname)}"/>
+                                </div>
+                                <button class="absolute bottom-1 right-1 size-6 bg-white rounded-full shadow-md flex items-center justify-center">
+                                    <span class="material-symbols-outlined text-sm">download</span>
+                                </button>
+                            </a>`).join('')}
+                        </div>
+                    </div>` : ''}
+                    ${logs.length > 0 ? `
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-400 uppercase mb-2">Agent Steps (${logs.length})</p>
+                        <div class="bg-[#1E1E2E] rounded-lg p-3 font-mono text-[10px] leading-relaxed terminal-scroll max-h-48 overflow-y-auto">
+                            ${logs.map(l => `<div class="text-[#a0a0c0]">${escapeHtml(l)}</div>`).join('')}
+                        </div>
+                    </div>` : ''}
+                </div>
+            </div>
+        `;
+        resultsList.appendChild(itemDiv);
+    });
+
+    resultsSection.scrollIntoView({ behavior: 'smooth' });
+    resetRunBtn();
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function toggleResult(header) {
+    const detail = header.nextElementSibling;
+    const icon = header.querySelector('.expand-icon');
+    detail.classList.toggle('hidden');
+    icon.textContent = detail.classList.contains('hidden') ? 'expand_more' : 'expand_less';
+    if (!detail.classList.contains('hidden')) {
+        icon.classList.add('text-primary');
+        icon.classList.remove('text-gray-400');
+    } else {
+        icon.classList.remove('text-primary');
+        icon.classList.add('text-gray-400');
+    }
+}
+
+function resetRunBtn() {
+    runBtn.disabled = !selectedFile;
+    document.getElementById('run-btn-icon').textContent = 'play_arrow';
+    document.getElementById('run-btn-text').textContent = 'Run Tests';
+}
+
+function resetDashboard() {
+    currentRunId = null;
+    selectedFile = null;
+    runStartTime = null;
+    fileInput.value = '';
+    fileLabel.textContent = 'Excel or CSV files';
+    fileSublabel.textContent = 'Tap to browse or drag & drop';
+    document.getElementById('instructions-input').value = '';
+    document.getElementById('execution-section').classList.add('hidden');
+    document.getElementById('results-section').classList.add('hidden');
+    document.getElementById('terminal').innerHTML = '';
+    document.getElementById('task-table-body').innerHTML = '';
+    document.getElementById('task-table').classList.add('hidden');
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('progress-pct').textContent = '0%';
+    document.getElementById('progress-label').textContent = 'Initializing...';
+    resetRunBtn();
+    runBtn.disabled = true;
+    document.getElementById('upload-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function scrollToSection(id) {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return `${m}m ${s}s`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+</body>
+</html>
