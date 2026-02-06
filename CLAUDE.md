@@ -97,6 +97,86 @@ myAccount-QA-agent/
 }
 ```
 
+## Implementation Tasks Per Service
+
+### UI Agent — `ui/` folder only
+
+Implement a single-page web app with 3 sections:
+
+1. **Upload Section** — Form to upload an Excel (.xlsx) test plan file. On submit, POST the file to Distributor at `DISTRIBUTOR_URL/api/test-runs` (multipart form upload). Show a spinner while uploading.
+
+2. **Progress Section** — After upload, poll `GET DISTRIBUTOR_URL/api/test-runs/{run_id}` every 3 seconds. Show a progress bar or task-level status table (task_id, target_url, status). Stop polling when all tasks are `completed` or `failed`.
+
+3. **Results Section** — When a run finishes, display a results table with columns: Target URL, Status (pass/fail), Summary, Account Info, Offers, Duration, Screenshots (clickable links). Screenshot URLs: `DISTRIBUTOR_URL/api/test-runs/{run_id}/tasks/{task_id}/screenshots/{filename}`.
+
+Tech: FastAPI + Jinja2 templates + httpx. The UI calls the Distributor API — it does NOT call the Worker directly.
+
+### Distributor Agent — `distributor/` folder only
+
+Implement the orchestration backend:
+
+1. **`POST /api/test-runs`** — Accept Excel file upload. Parse rows with openpyxl. Expected columns: `target_url`, `username`, `password`, `instructions` (optional). Create a `run_id` (uuid4). For each row, create a task and dispatch it to the Worker at `WORKER_URL/api/execute` asynchronously (use `httpx.AsyncClient` or background threads). Store run and task state in memory (dict).
+
+2. **`GET /api/test-runs/{run_id}`** — Return run status and all task results. Response shape:
+```json
+{
+  "run_id": "uuid",
+  "status": "running | completed",
+  "total_tasks": 5,
+  "completed_tasks": 3,
+  "tasks": [
+    {
+      "task_id": "uuid",
+      "target_url": "...",
+      "status": "pending | running | completed | failed",
+      "result": { ...worker response... }
+    }
+  ]
+}
+```
+
+3. **`GET /api/test-runs/{run_id}/tasks/{task_id}/screenshots/{filename}`** — Proxy screenshot files returned by the Worker. Store screenshots in a local temp directory.
+
+4. **`POST /api/test-runs/{run_id}/tasks/{task_id}/result`** — Callback endpoint for workers to post results back (alternative to synchronous dispatch).
+
+Tech: FastAPI + openpyxl + httpx. The Distributor calls the Worker API — it does NOT run browser automation itself.
+
+### Worker Agent — `worker/` folder only
+
+The core agent code (`agent.py`, `browser.py`, `config.py`) already exists and works. Tasks:
+
+1. **Fix `_find_chrome()` in `browser.py`** — Add Linux paths for Docker container: `/usr/bin/chromium`, `/usr/bin/chromium-browser`, `/usr/bin/google-chrome`.
+
+2. **Complete `app.py`** — The FastAPI wrapper is scaffolded. Make sure:
+   - `POST /api/execute` correctly calls `run_login_test()` from `agent.py`
+   - Screenshots are saved to a temp directory and filenames returned in the response
+   - Errors are caught and returned as `success: false` with error details
+   - The endpoint is async-safe (browser sessions are not shared across requests)
+
+3. **Screenshot handling** — Save screenshots to `/tmp/screenshots/{task_id}/` and serve them or return base64 in the response.
+
+4. **Health check** — `GET /health` should verify Chromium is installed and `GEMINI_API_KEY` is set.
+
+Tech: FastAPI + existing CDP agent. Do NOT rewrite `agent.py` or `browser.py` — only fix/extend as needed.
+
+### Excel Test Plan Format (shared knowledge for all agents)
+
+The uploaded `.xlsx` file has these columns (row 1 = headers):
+
+| Column | Required | Description |
+|---|---|---|
+| `target_url` | Yes | Login page URL to test |
+| `username` | Yes | Login username/email |
+| `password` | Yes | Login password |
+| `instructions` | No | Extra instructions for the agent |
+
+Example:
+```
+target_url                                          | username        | password  | instructions
+https://myaccount-s.westlakefinancial.com/.../login | user@test.com   | Pass123   |
+https://another-site.com/login                      | admin@test.com  | Secret1   | Check rewards page too
+```
+
 ## Getting Started (Local Standalone)
 
 ```bash
