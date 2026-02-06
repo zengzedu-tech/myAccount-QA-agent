@@ -30,10 +30,27 @@ def main():
         headless=config["headless"],
     )
 
-    print("\n" + "-" * 60)
+    print("\n" + "=" * 60)
     print("RESULT:", "PASS" if result["success"] else "FAIL")
+    print("=" * 60)
+
+    if result.get("login_duration") is not None:
+        print(f"\nLogin load time: {result['login_duration']:.2f}s")
+    else:
+        print("\nLogin load time: could not be measured")
+
+    print("\n" + "-" * 60)
+    print("ACCOUNT INFORMATION:")
     print("-" * 60)
-    print("\nAgent summary:")
+    print(result.get("account_info") or "(none captured)")
+
+    print("\n" + "-" * 60)
+    print("OFFERS:")
+    print("-" * 60)
+    print(result.get("offers") or "(none captured)")
+
+    print("\n" + "-" * 60)
+    print("Agent summary:")
     print(result["summary"])
 
     if result["steps"]:
