@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-agent-ui
+  labels:
+    app: qa-agent-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qa-agent-ui
+  template:
+    metadata:
+      labels:
+        app: qa-agent-ui
+    spec:
+      containers:
+        - name: ui
+          image: qa-agent-ui:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: DISTRIBUTOR_URL
+              value: "http://qa-agent-distributor:8080"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30

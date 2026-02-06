@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-agent-distributor
+  labels:
+    app: qa-agent-distributor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qa-agent-distributor
+  template:
+    metadata:
+      labels:
+        app: qa-agent-distributor
+    spec:
+      containers:
+        - name: distributor
+          image: qa-agent-distributor:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: WORKER_URL
+              value: "http://qa-agent-worker:8090"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
