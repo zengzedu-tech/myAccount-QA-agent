@@ -140,21 +140,38 @@ class _WebSocket:
 # ---------------------------------------------------------------------------
 
 def _find_chrome() -> str:
-    """Locate the Chrome executable on Windows."""
+    """Locate the Chrome/Chromium executable on Linux, Windows, or macOS."""
     candidates = []
+
+    # Linux paths (Docker containers, standard installs)
+    candidates.extend([
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+    ])
+
+    # macOS paths
+    candidates.extend([
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ])
+
+    # Windows paths
     for env in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
         base = os.environ.get(env, "")
         if base:
             candidates.append(os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"))
-    # Also check Edge as fallback
     for env in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
         base = os.environ.get(env, "")
         if base:
             candidates.append(os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"))
+
     for path in candidates:
         if os.path.isfile(path):
             return path
     raise FileNotFoundError(
+        "Chrome/Chromium not found. Checked:\n" + "\n".join(f"  {c}" for c in candidates)
         "Chrome/Edge not found. Checked:\n" + "\n".join(f"  {c}" for c in candidates)
     )
 
@@ -162,6 +179,9 @@ def _find_chrome() -> str:
 class BrowserSession:
     """Manages a Chrome browser session via CDP."""
 
+    def __init__(self, headless: bool = True, screenshot_dir: str = "screenshots"):
+        self.headless = headless
+        self.screenshot_dir = screenshot_dir
     def __init__(self, headless: bool = True):
         self.headless = headless
         self._process = None
@@ -183,6 +203,7 @@ class BrowserSession:
             "--no-sandbox",
             "--disable-extensions",
             "--disable-popup-blocking",
+            "--disable-dev-shm-usage",
             (
                 "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -267,6 +288,7 @@ class BrowserSession:
             return ""
         return str(val.get("value", ""))
 
+    # -- Browser tools -------------------------------------------------------
     # -- Browser tools (same interface as before) ----------------------------
 
     def navigate(self, url: str) -> str:
@@ -327,6 +349,8 @@ class BrowserSession:
         )
         if found == "NOT_FOUND":
             return f"Element '{selector}' not found."
+        self._send("Input.insertText", {"text": value})
+        time.sleep(0.2)
         # Use CDP Input.insertText to simulate real keyboard input —
         # this fires native browser events that all frameworks detect.
         self._send("Input.insertText", {"text": value})
@@ -361,6 +385,11 @@ class BrowserSession:
         return html
 
     def screenshot(self, filename: str = "screenshot.png") -> str:
+        """Take a screenshot and save it to the configured screenshot directory."""
+        os.makedirs(self.screenshot_dir, exist_ok=True)
+        result = self._send("Page.captureScreenshot", {"format": "png"})
+        data = base64.b64decode(result["data"])
+        path = os.path.join(self.screenshot_dir, filename)
         """Take a screenshot and save it."""
         os.makedirs("screenshots", exist_ok=True)
         result = self._send("Page.captureScreenshot", {"format": "png"})
@@ -422,6 +451,9 @@ class BrowserSession:
 
 
 # ---------------------------------------------------------------------------
+# Tool execution dispatcher
+# ---------------------------------------------------------------------------
+
 # Tool definitions (unchanged — used by agent.py)
 # ---------------------------------------------------------------------------
 
