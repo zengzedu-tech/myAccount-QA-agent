@@ -1,192 +1,38 @@
-"""Gemini-powered QA agent — calls Gemini REST API directly via urllib (no SDK)."""
+"""Generic skill runner — executes any BaseSkill via Gemini + CDP browser.
+
+The runner is skill-agnostic: it takes a BaseSkill instance, wires up its
+tool declarations and system instruction, runs the Gemini function-calling
+loop, and returns the structured result produced by the skill's parse_done().
+"""
+
+from __future__ import annotations
 
 import json
 import time
 import urllib.request
+
 from browser import BrowserSession, execute_tool
+from skills.base import BaseSkill
 
 GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-)
-
-# Tool declarations in Gemini REST API format
-TOOL_DECLARATIONS = [
-    {
-        "name": "navigate",
-        "description": "Navigate the browser to a URL.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "url": {"type": "STRING", "description": "The URL to navigate to."}
-            },
-            "required": ["url"],
-        },
-    },
-    {
-        "name": "click",
-        "description": "Click an element on the page by CSS selector.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "selector": {
-                    "type": "STRING",
-                    "description": "CSS selector of the element to click.",
-                }
-            },
-            "required": ["selector"],
-        },
-    },
-    {
-        "name": "fill",
-        "description": "Type text into a form field identified by CSS selector.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "selector": {
-                    "type": "STRING",
-                    "description": "CSS selector of the input field.",
-                },
-                "value": {
-                    "type": "STRING",
-                    "description": "The text to type into the field.",
-                },
-            },
-            "required": ["selector", "value"],
-        },
-    },
-    {
-        "name": "get_page_text",
-        "description": "Get the visible text content of the current page.",
-        "parameters": {"type": "OBJECT", "properties": {}},
-    },
-    {
-        "name": "get_page_html",
-        "description": (
-            "Get the HTML source of the current page to inspect its structure "
-            "and find selectors."
-        ),
-        "parameters": {"type": "OBJECT", "properties": {}},
-    },
-    {
-        "name": "screenshot",
-        "description": "Take a screenshot of the current page.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "filename": {
-                    "type": "STRING",
-                    "description": "Filename for the screenshot (default: screenshot.png).",
-                }
-            },
-        },
-    },
-    {
-        "name": "get_current_url",
-        "description": "Get the current page URL.",
-        "parameters": {"type": "OBJECT", "properties": {}},
-    },
-    {
-        "name": "press_key",
-        "description": "Press a keyboard key (e.g. 'Enter', 'Tab').",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "key": {
-                    "type": "STRING",
-                    "description": "The key to press.",
-                }
-            },
-            "required": ["key"],
-        },
-    },
-    {
-        "name": "wait",
-        "description": "Wait for a specified duration in milliseconds.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "ms": {
-                    "type": "NUMBER",
-                    "description": "Milliseconds to wait (default: 2000).",
-                }
-            },
-        },
-    },
-    {
-        "name": "done",
-        "description": (
-            "Call this when you have completed ALL tasks (login test, account info, and offers). "
-            "Report the full results."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "result": {
-                    "type": "STRING",
-                    "description": "'pass' if login succeeded, 'fail' if it did not.",
-                },
-                "reason": {
-                    "type": "STRING",
-                    "description": "Explanation of why login passed or failed.",
-                },
-                "account_info": {
-                    "type": "STRING",
-                    "description": "Description of the basic account information shown on the main page after login (account holder name, accounts listed, balances, payment info, etc.).",
-                },
-                "offers": {
-                    "type": "STRING",
-                    "description": "List of offers shown on the offers page. Describe each offer.",
-                },
-            },
-            "required": ["result", "reason", "account_info", "offers"],
-        },
-    },
-]
-
-SYSTEM_INSTRUCTION = (
-    "You are a QA testing agent controlling a real browser. "
-    "You MUST use the provided tools to interact with the browser. "
-    "Do NOT guess or assume results — you must actually perform each action.\n\n"
-    "Instructions:\n"
-    "PHASE 1 — LOGIN:\n"
-    "1. Call navigate to go to the target URL.\n"
-    "2. Call get_page_html to inspect the page and find the login form fields and submit button.\n"
-    "3. Call fill to enter the username/email and password using the correct CSS selectors.\n"
-    "4. Call click on the submit button (or call press_key with 'Enter').\n"
-    "5. Call wait with 5000ms for the page to fully load after login.\n"
-    "6. Call get_current_url to verify the URL changed away from the login page.\n\n"
-    "PHASE 2 — ACCOUNT INFO:\n"
-    "7. Call get_page_text to read the main account overview page.\n"
-    "8. Call screenshot with filename 'account_overview.png'.\n"
-    "9. Carefully note ALL account information: account holder name, vehicle(s), "
-    "account numbers, balances, payment amounts, due dates, and any other details shown.\n\n"
-    "PHASE 3 — OFFERS PAGE:\n"
-    "10. Call get_page_html to find the navigation link/button for the Offers page.\n"
-    "11. Call click on the Offers link to navigate to the offers page.\n"
-    "12. Call wait with 3000ms for the offers page to load.\n"
-    "13. Call get_page_text to read all offers on the page.\n"
-    "14. Call screenshot with filename 'offers_page.png'.\n\n"
-    "PHASE 4 — REPORT:\n"
-    "15. Call done with the result, account_info (detailed description of what you saw "
-    "on the account overview), and offers (list every offer shown on the offers page).\n\n"
-    "Be methodical. If a selector doesn't work, call get_page_html again and try a different one.\n"
-    "IMPORTANT: Start by calling the navigate tool. Do not skip any steps. "
-    "You MUST complete all 4 phases before calling done."
 )
 
 
 def _call_gemini(
     api_key: str,
     model: str,
+    system_instruction: str,
+    tool_declarations: list[dict],
     contents: list,
     tool_mode: str = "ANY",
 ) -> dict:
     """Make a direct REST call to the Gemini generateContent endpoint."""
     url = GEMINI_API_URL.format(model=model) + f"?key={api_key}"
     body = {
-        "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
         "contents": contents,
-        "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
+        "tools": [{"functionDeclarations": tool_declarations}],
         "toolConfig": {"functionCallingConfig": {"mode": tool_mode}},
     }
     data = json.dumps(body).encode("utf-8")
@@ -197,49 +43,58 @@ def _call_gemini(
         return json.loads(resp.read())
 
 
-def run_login_test(
-    target_url: str,
-    username: str,
-    password: str,
+def run_skill(
+    skill: BaseSkill,
+    request: dict,
     api_key: str,
     headless: bool = True,
     model: str = "gemini-2.0-flash",
     screenshot_dir: str = "screenshots",
 ) -> dict:
-    """
-    Run an AI-driven login test against the target URL.
+    """Run a skill against a target URL via an AI-driven browser session.
 
-    Returns a dict with keys: success, summary, steps, login_duration, account_info, offers.
+    Parameters
+    ----------
+    skill : BaseSkill
+        The skill instance that defines tools, prompts, and result parsing.
+    request : dict
+        Must contain at least ``target_url`` and ``credentials``.
+        Passed to ``skill.build_user_message()``.
+    api_key : str
+        Gemini API key.
+    headless : bool
+        Run Chrome in headless mode.
+    model : str
+        Gemini model name.
+    screenshot_dir : str
+        Directory to save screenshots into.
+
+    Returns
+    -------
+    dict
+        Always contains ``success``, ``summary``, ``steps``.
+        Additional keys depend on the skill's ``parse_done()`` output.
     """
     session = BrowserSession(headless=headless, screenshot_dir=screenshot_dir)
     session.start()
 
     steps: list[str] = []
-
-    user_message = (
-        f"Test login on this website:\n"
-        f"- URL: {target_url}\n"
-        f"- Username/email: {username}\n"
-        f"- Password: {password}\n\n"
-        f"Start by calling the navigate tool with the URL above."
-    )
-
+    user_message = skill.build_user_message(request)
     contents = [{"role": "user", "parts": [{"text": user_message}]}]
 
-    max_turns = 25
-    final_summary = "Agent did not produce a result."
-    done_called = False
-    account_info = ""
-    offers = ""
+    tool_declarations = skill.get_all_tool_declarations()
+    system_instruction = skill.system_instruction
 
-    login_click_time = None
-    login_load_time = None
-    login_duration = None
+    final_summary = "Agent did not produce a result."
+    done_result: dict | None = None
 
     try:
-        for turn in range(max_turns):
-            tool_mode = "AUTO" if done_called else "ANY"
-            response = _call_gemini(api_key, model, contents, tool_mode)
+        for turn in range(skill.max_turns):
+            tool_mode = "AUTO" if done_result is not None else "ANY"
+            response = _call_gemini(
+                api_key, model, system_instruction,
+                tool_declarations, contents, tool_mode,
+            )
 
             candidate = response.get("candidates", [{}])[0]
             model_content = candidate.get("content", {})
@@ -269,19 +124,8 @@ def run_login_test(
                 print(f"  -> {step_desc}")
                 steps.append(step_desc)
 
-                if name == "click" and login_click_time is None:
-                    login_click_time = time.time()
-                    print(f"  [timer] Login click — timer started")
-
                 if name == "done":
-                    done_called = True
-                    result_val = args.get("result", "fail")
-                    reason = args.get("reason", "No reason given.")
-                    account_info = args.get("account_info", "")
-                    offers = args.get("offers", "")
-                    final_summary = json.dumps(
-                        {"result": result_val, "reason": reason}
-                    )
+                    done_result = skill.parse_done(args)
                     result = "Test complete."
                 else:
                     try:
@@ -289,15 +133,8 @@ def run_login_test(
                     except Exception as e:
                         result = f"Error: {e}"
 
-                if (
-                    name == "get_current_url"
-                    and login_click_time is not None
-                    and login_load_time is None
-                    and "login" not in result.lower()
-                ):
-                    login_load_time = time.time()
-                    login_duration = login_load_time - login_click_time
-                    print(f"  [timer] Main page loaded — {login_duration:.2f}s")
+                # Let the skill observe every tool call (for timing, metrics, etc.)
+                skill.on_tool_call(name, args, result)
 
                 print(f"  <- {result[:200]}")
 
@@ -310,7 +147,7 @@ def run_login_test(
                     }
                 )
 
-            if done_called:
+            if done_result is not None:
                 break
 
             contents.append({"role": "user", "parts": response_parts})
@@ -318,16 +155,13 @@ def run_login_test(
     finally:
         session.stop()
 
-    success = (
-        '"result": "pass"' in final_summary
-        or '"result":"pass"' in final_summary
-    )
-
-    return {
-        "success": success,
-        "summary": final_summary,
-        "steps": steps,
-        "login_duration": login_duration,
-        "account_info": account_info,
-        "offers": offers,
-    }
+    # Build the final output — merge skill-specific fields with standard ones
+    if done_result is not None:
+        output = {**done_result, "steps": steps}
+    else:
+        output = {
+            "success": False,
+            "summary": final_summary,
+            "steps": steps,
+        }
+    return output
