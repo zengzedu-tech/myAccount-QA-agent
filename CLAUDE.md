@@ -14,8 +14,8 @@ The platform consists of 3 microservices deployed on GKE:
 | Service | Status | Notes |
 |---|---|---|
 | **UI** | ✅ Done | Dashboard with upload, execution tracking, and results display |
-| **Distributor** | ⬜ Not started | `distributor/app.py` is scaffolded (stub only) |
-| **Worker** | ⬜ Not started | `worker/app.py` is scaffolded; `agent.py` and `browser.py` exist but need integration |
+| **Distributor** | ✅ Done | AI-powered Excel parser, skill discovery, concurrent task dispatch |
+| **Worker** | ✅ Done | Skill plugin system with `login_checker`, generic agent runner |
 
 ## Repository Structure
 
